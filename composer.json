@@ -1,0 +1,17 @@
+{
+    "name": "jeremiep/pjcategoryproducts",
+    "description": "Displays a list of products associated with each category directly in the category administration pages.",
+    "type": "prestashop-module",
+    "autoload": {
+        "psr-4": {
+            "JeremieP\\PJCategoryProducts\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Jérémie Pasquis",
+            "email": "jeremie.pasquis@gmail.com"
+        }
+    ],
+    "require": {}
+}
