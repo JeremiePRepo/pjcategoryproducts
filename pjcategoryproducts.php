@@ -31,6 +31,7 @@ if (!defined('_PS_VERSION_')) {
 class PJCategoryProducts extends Module
 {
     protected $config_form = false;
+    protected static $hookCount = 0;
 
     public function __construct()
     {
@@ -59,10 +60,7 @@ class PJCategoryProducts extends Module
      */
     public function install()
     {
-        return parent::install() &&
-            $this->registerHook('displayAdminEndContent');
-//            $this->registerHook('header') &&
-//            $this->registerHook('displayBackOfficeHeader');
+        return parent::install() && $this->registerHook('displayAdminEndContent');
     }
 
     public function uninstall()
@@ -71,142 +69,55 @@ class PJCategoryProducts extends Module
     }
 
     /**
-     * Load the configuration form
-     */
-    public function getContent()
-    {
-        /**
-         * If values have been submitted in the form, process.
-         */
-        if (((bool)Tools::isSubmit('submitCategoryproductsModule')) == true) {
-            $this->postProcess();
-        }
-
-        $this->context->smarty->assign('module_dir', $this->_path);
-
-        $output = $this->context->smarty->fetch($this->local_path . 'views/templates/admin/configure.tpl');
-
-        return $output . $this->renderForm();
-    }
-
-    /**
-     * Create the form that will be displayed in the configuration of your module.
-     */
-    protected function renderForm()
-    {
-        $helper = new HelperForm();
-
-        $helper->show_toolbar = false;
-        $helper->table = $this->table;
-        $helper->module = $this;
-        $helper->default_form_language = $this->context->language->id;
-        $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG', 0);
-
-        $helper->identifier = $this->identifier;
-        $helper->submit_action = 'submitCategoryproductsModule';
-        $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
-            . '&configure=' . $this->name . '&tab_module=' . $this->tab . '&module_name=' . $this->name;
-        $helper->token = Tools::getAdminTokenLite('AdminModules');
-
-        $helper->tpl_vars = array(
-            'fields_value' => $this->getConfigFormValues(), /* Add values for your inputs */
-            'languages' => $this->context->controller->getLanguages(),
-            'id_language' => $this->context->language->id,
-        );
-
-        return $helper->generateForm(array($this->getConfigForm()));
-    }
-
-    /**
-     * Create the structure of your form.
-     */
-    protected function getConfigForm()
-    {
-        return array(
-            'form' => array(
-                'legend' => array(
-                    'title' => $this->l('Settings'),
-                    'icon' => 'icon-cogs',
-                ),
-                'input' => array(),
-                'submit' => array(
-                    'title' => $this->l('Save'),
-                ),
-            ),
-        );
-    }
-
-    /**
-     * Set values for the inputs.
-     */
-    protected function getConfigFormValues()
-    {
-        return array();
-    }
-
-    /**
-     * Save form data.
-     */
-    protected function postProcess()
-    {
-        $form_values = $this->getConfigFormValues();
-
-        foreach (array_keys($form_values) as $key) {
-            Configuration::updateValue($key, Tools::getValue($key));
-        }
-    }
-
-    /**
-     * Add the CSS & JavaScript files you want to be loaded in the BO.
-     */
-    public function hookDisplayBackOfficeHeader()
-    {
-        if (Tools::getValue('configure') == $this->name) {
-            $this->context->controller->addJS($this->_path . 'views/js/back.js');
-            $this->context->controller->addCSS($this->_path . 'views/css/back.css');
-        }
-    }
-
-    /**
-     * Add the CSS & JavaScript files you want to be added on the FO.
-     */
-    public function hookHeader()
-    {
-        $this->context->controller->addJS($this->_path . '/views/js/front.js');
-        $this->context->controller->addCSS($this->_path . '/views/css/front.css');
-    }
-
-    /**
      * Affiche la liste des produits associés à la catégorie
      */
     public function hookDisplayAdminEndContent($params): string
     {
-        // Vérification de l'ID de la catégorie
-        global $kernel;
-        $requestStack = $kernel->getContainer()->get('request_stack');
-        $request = $requestStack->getCurrentRequest();
-        $categoryId = (int)$request->get('categoryId');
-
-        if (Tools::getValue('controller') !== 'AdminCategories' || !$categoryId) {
+        self::$hookCount++;
+        if (Tools::getValue('controller') !== 'AdminCategories' || self::$hookCount > 1) {
             return '';
         }
 
-        // Récupération de la factory de la grille
-        $gridFactory = $this->get('prestashop.core.grid.factory.category_products');
+        global $kernel;
+        $container = $kernel->getContainer();
+        $requestStack = $container->get('request_stack');
+        $request = $requestStack->getCurrentRequest();
+        $categoryId = (int)$request->get('categoryId');
 
-        // Création des critères de recherche pour la grille
-        $searchCriteria = new \PrestaShop\PrestaShop\Core\Grid\Search\SearchCriteria([
-            'id_category' => (int)$categoryId,
+        if (!$categoryId) {
+            return '';
+        }
+
+        $productGridFactory = $container->get('prestashop.core.grid.factory.product');
+
+        $filters = new PrestaShop\PrestaShop\Core\Search\Filters\ProductFilters(
+            PrestaShop\PrestaShop\Core\Domain\Shop\ValueObject\ShopConstraint::shop((int)Context::getContext()->shop->id),
+            [
+                'id_category' => $categoryId,
+                "limit" => 20,
+                "offset" => 0,
+                "orderBy" => "id_product",
+                "sortOrder" => "desc",
+                "filters" => ['id_category' => $categoryId],
+            ],
+            'product'
+        );
+
+        $productGrid = $productGridFactory->getGrid($filters);
+        $filteredCategoryId = null;
+
+        if (isset($filters->getFilters()['id_category'])) {
+            $filteredCategoryId = (int) $filters->getFilters()['id_category'];
+        }
+
+        $categoriesForm = $container->get('form.factory')->create(PrestaShopBundle\Form\Admin\Sell\Product\Category\CategoryFilterType::class, $filteredCategoryId, [
+            'action' => $container->get('router')->generate('admin_products_grid_category_filter', [], Symfony\Component\Routing\Generator\UrlGeneratorInterface::ABSOLUTE_PATH),
         ]);
 
-        // Génération de la grille
-        $grid = $gridFactory->getGrid($searchCriteria);
-
-        // Rendu de la grille
-        $gridPresenter = $this->get('prestashop.core.grid.presenter.grid_presenter');
-        $gridHtml = $gridPresenter->present($grid);
-
-        // Conversion explicite en chaîne si nécessaire
-        return is_string($gridHtml) ? $gridHtml : json_encode($gridHtml);
+        return $container->get('twig')->render('@PrestaShop/Admin/Sell/Catalog/Product/Grid/grid_panel.html.twig', [
+            'categoryFilterForm' => $categoriesForm->createView(),
+            'grid' => $container->get('prestashop.core.grid.presenter.grid_presenter')->present($productGrid),
+            'enableSidebar' => false,
+        ]);
     }
 }
