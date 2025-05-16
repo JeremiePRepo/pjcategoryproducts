@@ -58,12 +58,16 @@ class PJCategoryProducts extends Module
      * Don't forget to create update methods if needed:
      * http://doc.prestashop.com/display/PS16/Enabling+the+Auto-Update
      */
-    public function install()
+    public function install(): bool
     {
-        return parent::install() && $this->registerHook('displayAdminEndContent');
+        return parent::install()
+            && $this->registerHook([
+                'displayAdminEndContent',
+                'displayBackOfficeHeader'
+            ]);
     }
 
-    public function uninstall()
+    public function uninstall(): bool
     {
         return parent::uninstall();
     }
@@ -72,6 +76,19 @@ class PJCategoryProducts extends Module
      * Affiche la liste des produits associés à la catégorie
      */
     public function hookDisplayAdminEndContent($params): string
+    {
+        try {
+            return $this->displayAdminEndContent($params);
+        } catch (\PrestaShop\PrestaShop\Core\Domain\Shop\Exception\ShopException $e) {
+            return $e->getMessage();
+        }
+    }
+
+    /**
+     * Displays the list of products associated with the category with PrestaShop services
+     * @throws PrestaShop\PrestaShop\Core\Domain\Shop\Exception\ShopException
+     */
+    private function displayAdminEndContent($params)
     {
         self::$hookCount++;
         if (Tools::getValue('controller') !== 'AdminCategories' || self::$hookCount > 1) {
@@ -88,12 +105,11 @@ class PJCategoryProducts extends Module
             return '';
         }
 
-        $productGridFactory = $container->get('prestashop.core.grid.factory.product');
+        $productGridFactory = $container->get('prestashop.core.grid.factory.product_light');
 
         $filters = new PrestaShop\PrestaShop\Core\Search\Filters\ProductFilters(
             PrestaShop\PrestaShop\Core\Domain\Shop\ValueObject\ShopConstraint::shop((int)Context::getContext()->shop->id),
             [
-                'id_category' => $categoryId,
                 "limit" => 20,
                 "offset" => 0,
                 "orderBy" => "id_product",
@@ -107,17 +123,29 @@ class PJCategoryProducts extends Module
         $filteredCategoryId = null;
 
         if (isset($filters->getFilters()['id_category'])) {
-            $filteredCategoryId = (int) $filters->getFilters()['id_category'];
+            $filteredCategoryId = (int)$filters->getFilters()['id_category'];
         }
 
-        $categoriesForm = $container->get('form.factory')->create(PrestaShopBundle\Form\Admin\Sell\Product\Category\CategoryFilterType::class, $filteredCategoryId, [
-            'action' => $container->get('router')->generate('admin_products_grid_category_filter', [], Symfony\Component\Routing\Generator\UrlGeneratorInterface::ABSOLUTE_PATH),
-        ]);
+        // Correction de l'URL du filtre
+        $categoriesForm = $container->get('form.factory')->create(
+            PrestaShopBundle\Form\Admin\Sell\Product\Category\CategoryFilterType::class,
+            $filteredCategoryId,
+            [
+                'action' => $container->get('router')->generate('admin_products_grid_category_filter'),
+            ]
+        );
 
         return $container->get('twig')->render('@PrestaShop/Admin/Sell/Catalog/Product/Grid/grid_panel.html.twig', [
             'categoryFilterForm' => $categoriesForm->createView(),
             'grid' => $container->get('prestashop.core.grid.presenter.grid_presenter')->present($productGrid),
             'enableSidebar' => false,
         ]);
+    }
+
+    public function hookDisplayBackOfficeHeader($params)
+    {
+        if (Tools::getValue('controller') === 'AdminCategories') {
+            $this->context->controller->addCSS($this->_path . 'views/css/admin.css');
+        }
     }
 }
