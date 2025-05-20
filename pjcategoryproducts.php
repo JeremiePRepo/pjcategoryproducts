@@ -31,7 +31,7 @@ if (!defined('_PS_VERSION_')) {
 class PJCategoryProducts extends Module
 {
     protected $config_form = false;
-    protected static $hookCount = 0;
+    private static array $localCache = [];
 
     public function __construct()
     {
@@ -90,8 +90,7 @@ class PJCategoryProducts extends Module
      */
     private function displayAdminEndContent($params)
     {
-        self::$hookCount++;
-        if (Tools::getValue('controller') !== 'AdminCategories' || self::$hookCount > 1) {
+        if (Tools::getValue('controller') !== 'AdminCategories') {
             return '';
         }
 
@@ -100,12 +99,12 @@ class PJCategoryProducts extends Module
         $requestStack = $container->get('request_stack');
         $request = $requestStack->getCurrentRequest();
         $categoryId = (int)$request->get('categoryId');
-
-        if (!$categoryId) {
-            return '';
-        }
-
         $productGridFactory = $container->get('prestashop.core.grid.factory.product_light');
+        $localCacheName = __FUNCTION__.'_' . Tools::getValue('controller') . '_' . Tools::getValue('categoryId');
+
+        if (isset(self::$localCache[$localCacheName])) {
+            return self::$localCache[$localCacheName];
+        }
 
         $filters = new PrestaShop\PrestaShop\Core\Search\Filters\ProductFilters(
             PrestaShop\PrestaShop\Core\Domain\Shop\ValueObject\ShopConstraint::shop((int)Context::getContext()->shop->id),
@@ -114,7 +113,7 @@ class PJCategoryProducts extends Module
                 "offset" => 0,
                 "orderBy" => "id_product",
                 "sortOrder" => "desc",
-                "filters" => ['id_category' => $categoryId],
+                "filters" => ($categoryId ? [ 'id_category' => $categoryId, ] : []),
             ],
             'product'
         );
@@ -135,11 +134,14 @@ class PJCategoryProducts extends Module
             ]
         );
 
-        return $container->get('twig')->render('@PrestaShop/Admin/Sell/Catalog/Product/Grid/grid_panel.html.twig', [
+        $html = $container->get('twig')->render('@PrestaShop/Admin/Sell/Catalog/Product/Grid/grid_panel.html.twig', [
             'categoryFilterForm' => $categoriesForm->createView(),
             'grid' => $container->get('prestashop.core.grid.presenter.grid_presenter')->present($productGrid),
             'enableSidebar' => false,
         ]);
+
+        self::$localCache[$localCacheName] = $html;
+        return $html;
     }
 
     public function hookDisplayBackOfficeHeader($params)
