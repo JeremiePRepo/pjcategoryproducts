@@ -1,0 +1,6 @@
+{% extends '@PrestaShop/Admin/Common/Grid/grid_panel.html.twig' %}
+
+{% block grid_view_block %}
+    {{ include('@PrestaShop/Admin/Sell/Catalog/Product/Grid/grid.html.twig', {'grid': grid }) }}
+    <script src="{{ asset('themes/new-theme/public/product_index.bundle.js') }}"></script>
+{% endblock %}

@@ -63,7 +63,6 @@ class PJCategoryProducts extends Module
         return parent::install()
             && $this->registerHook([
                 'displayAdminEndContent',
-                'displayBackOfficeHeader'
             ]);
     }
 
@@ -79,7 +78,7 @@ class PJCategoryProducts extends Module
     {
         try {
             return $this->displayAdminEndContent($params);
-        } catch (\PrestaShop\PrestaShop\Core\Domain\Shop\Exception\ShopException $e) {
+        } catch (Exception $e) {
             return $e->getMessage();
         }
     }
@@ -87,67 +86,99 @@ class PJCategoryProducts extends Module
     /**
      * Displays the list of products associated with the category with PrestaShop services
      * @throws PrestaShop\PrestaShop\Core\Domain\Shop\Exception\ShopException
+     * @throws Exception
      */
     private function displayAdminEndContent($params)
     {
-        if (Tools::getValue('controller') !== 'AdminCategories') {
+        if ($this->context->controller->controller_name !== 'AdminCategories') {
             return '';
         }
 
-        global $kernel;
-        $container = $kernel->getContainer();
-        $requestStack = $container->get('request_stack');
-        $request = $requestStack->getCurrentRequest();
-        $categoryId = (int)$request->get('categoryId');
-        $productGridFactory = $container->get('prestashop.core.grid.factory.product_light');
-        $localCacheName = __FUNCTION__.'_' . Tools::getValue('controller') . '_' . Tools::getValue('categoryId');
+        $categoryId = (int)$this->get('request_stack')->getCurrentRequest()->get('categoryId');
+        $localCacheName = __FUNCTION__.'_' . $this->context->controller->controller_name . '_' . $categoryId;
 
         if (isset(self::$localCache[$localCacheName])) {
             return self::$localCache[$localCacheName];
         }
 
-        $filters = new PrestaShop\PrestaShop\Core\Search\Filters\ProductFilters(
-            PrestaShop\PrestaShop\Core\Domain\Shop\ValueObject\ShopConstraint::shop((int)Context::getContext()->shop->id),
-            [
-                "limit" => 20,
-                "offset" => 0,
-                "orderBy" => "id_product",
-                "sortOrder" => "desc",
-                "filters" => ($categoryId ? [ 'id_category' => $categoryId, ] : []),
-            ],
-            'product'
-        );
+        $categoryFilterForm = $this->get('form.factory')->create(
+            PrestaShopBundle\Form\Admin\Sell\Product\Category\CategoryFilterType::class,
+            $categoryId,
+            ['action' => $this->get('router')->generate('admin_products_grid_category_filter'),]
+        )->createView();
 
-        $productGrid = $productGridFactory->getGrid($filters);
-        $filteredCategoryId = null;
+        $productFilters = $this->get('request_stack')->getCurrentRequest()->request->get('product', []);
 
-        if (isset($filters->getFilters()['id_category'])) {
-            $filteredCategoryId = (int)$filters->getFilters()['id_category'];
+        $filtersKeysType = [
+            'id_product' => 'int.range',
+            'name' => 'string',
+            'reference' => 'string',
+            'category' => 'string',
+            'final_price_tax_excluded' => 'float.range',
+            'quantity' => 'int.range',
+            'active' => 'bool',
+        ];
+
+        $filters = [];
+        if ($categoryId) {
+            $filters['id_category'] = $categoryId;
         }
 
-        // Correction de l'URL du filtre
-        $categoriesForm = $container->get('form.factory')->create(
-            PrestaShopBundle\Form\Admin\Sell\Product\Category\CategoryFilterType::class,
-            $filteredCategoryId,
-            [
-                'action' => $container->get('router')->generate('admin_products_grid_category_filter'),
-            ]
+        foreach ($filtersKeysType as $key => $filterType) {
+            switch ($filterType) {
+                case 'int.range':
+                    if (!empty($productFilters[$key]['min_field']) || !empty($productFilters[$key]['max_field'])) {
+                        $filters[$key] = [
+                            'min_field' => !empty($productFilters[$key]['min_field']) ? (int)$productFilters[$key]['min_field'] : null,
+                            'max_field' => !empty($productFilters[$key]['max_field']) ? (int)$productFilters[$key]['max_field'] : null,
+                        ];
+                    }
+                    break;
+                case 'string':
+                    if (!empty($productFilters[$key])) {
+                        $filters[$key] = (string)$productFilters[$key];
+                    }
+                    break;
+                case 'bool':
+                    if (isset($productFilters[$key]) && ($productFilters[$key] === '1' || $productFilters[$key] === '0')) {
+                        $filters[$key] = (int)$productFilters[$key];
+                    }
+                    break;
+                case 'float.range':
+                    if (!empty($productFilters[$key]['min_field']) || !empty($productFilters[$key]['max_field'])) {
+                        $filters[$key] = [
+                            'min_field' => !empty($productFilters[$key]['min_field']) ? (float)$productFilters[$key]['min_field'] : null,
+                            'max_field' => !empty($productFilters[$key]['max_field']) ? (float)$productFilters[$key]['max_field'] : null,
+                        ];
+                    }
+                    break;
+            }
+        }
+
+        $grid = $this->get('prestashop.core.grid.presenter.grid_presenter')->present(
+            $this->get('prestashop.core.grid.factory.product')->getGrid(
+                new PrestaShop\PrestaShop\Core\Search\Filters\ProductFilters(
+                    PrestaShop\PrestaShop\Core\Domain\Shop\ValueObject\ShopConstraint::shop(
+                        (int)Context::getContext()->shop->id
+                    ),
+                    [
+                        "limit" => 20,
+                        "offset" => 0,
+                        "orderBy" => "id_product",
+                        "sortOrder" => "desc",
+                        "filters" => $filters,
+                    ],
+                    'product'
+                )
+            )
         );
 
-        $html = $container->get('twig')->render('@PrestaShop/Admin/Sell/Catalog/Product/Grid/grid_panel.html.twig', [
-            'categoryFilterForm' => $categoriesForm->createView(),
-            'grid' => $container->get('prestashop.core.grid.presenter.grid_presenter')->present($productGrid),
-            'enableSidebar' => false,
+        $html = $this->get('twig')->render('@Modules/pjcategoryproduct/views/templates/admin/grid.html.twig', [
+            'categoryFilterForm' => $categoryFilterForm,
+            'grid' => $grid,
         ]);
 
         self::$localCache[$localCacheName] = $html;
         return $html;
-    }
-
-    public function hookDisplayBackOfficeHeader($params)
-    {
-        if (Tools::getValue('controller') === 'AdminCategories') {
-            $this->context->controller->addCSS($this->_path . 'views/css/admin.css');
-        }
     }
 }
